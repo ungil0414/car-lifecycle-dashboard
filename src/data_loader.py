@@ -47,8 +47,17 @@ def load_lifespan_trend():
     return pd.DataFrame(columns=["연도", "차급", "평균_사용연수"]), False
 
 
-def load_age_preference_data():
-    return _load_or_fallback("age_preference.csv", sample_data.get_age_preference_data)
+def load_age_distribution_data():
+    """연령대별 자동차 등록현황 (서울시, 실제 데이터)"""
+    return _load_or_fallback("age_distribution.csv", sample_data.get_age_distribution_data)
+
+
+def load_age_gender_trend():
+    """연령대별/성별 등록대수 연도별(2023~2025) 추이 (실제 데이터 없으면 빈 DF)"""
+    path = PROCESSED_DIR / "age_gender_distribution_full.csv"
+    if path.exists():
+        return pd.read_csv(path), True
+    return pd.DataFrame(columns=["연도", "성별", "연령대", "등록대수"]), False
 
 
 def load_maintenance_cost_data():

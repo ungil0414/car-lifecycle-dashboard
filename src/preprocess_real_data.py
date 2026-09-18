@@ -144,6 +144,45 @@ def build_lifespan_trend(df_age_full: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values(["차급", "연도"]).reset_index(drop=True)
 
 
+def _parse_seoul_age_gender_file(path: Path) -> pd.DataFrame:
+    """서울 열린데이터광장 '자동차등록현황(성별/연령별)' 파일을 긴 형태로 변환.
+    반환 컬럼: 연도, 성별, 연령대, 등록대수
+    (원본은 성별/연령대가 병합 셀로 되어 있어 ffill 필요)
+    """
+    raw = pd.read_excel(path, sheet_name="데이터", header=None)
+    years = raw.iloc[0, 2:].tolist()
+
+    labels = raw.iloc[1:, 0:2].copy()
+    labels.columns = ["성별", "연령대"]
+    labels["성별"] = labels["성별"].ffill()
+    labels = labels.reset_index(drop=True)
+    data = raw.iloc[1:, 2:].reset_index(drop=True)
+
+    records = []
+    for row_idx in range(len(labels)):
+        gender = labels.loc[row_idx, "성별"]
+        age = labels.loc[row_idx, "연령대"]
+        if gender == "법인 및 사업자" or age == "소계":
+            continue  # 개인 소유 차량만 분석 대상으로 함
+        for col_idx, year in enumerate(years):
+            val = pd.to_numeric(data.iloc[row_idx, col_idx], errors="coerce")
+            if pd.isna(val):
+                continue
+            records.append({"연도": int(year), "성별": gender, "연령대": age, "등록대수": int(val)})
+    return pd.DataFrame(records)
+
+
+def build_age_distribution_summary(df_age_full: pd.DataFrame, year: int = 2025) -> pd.DataFrame:
+    """연령대별 등록대수 요약(성별 합산, 최신연도) + 비중(%)"""
+    sub = df_age_full[df_age_full["연도"] == year]
+    grouped = sub.groupby("연령대", as_index=False)["등록대수"].sum()
+    order = ["10대 이하", "20대", "30대", "40대", "50대", "60대", "70대", "80대", "90대 이상"]
+    grouped["연령대"] = pd.Categorical(grouped["연령대"], categories=order, ordered=True)
+    grouped = grouped.sort_values("연령대").reset_index(drop=True)
+    grouped["비중(%)"] = round(grouped["등록대수"] / grouped["등록대수"].sum() * 100, 1)
+    return grouped
+
+
 def main():
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -174,6 +213,16 @@ def main():
     trend = build_lifespan_trend(df_age_full)
     trend.to_csv(PROCESSED_DIR / "lifespan_trend.csv", index=False, encoding="utf-8-sig")
     print(trend.tail(8))
+
+    print("\n서울시 연령대별/성별 등록현황 파싱 중...")
+    seoul_age_path = RAW_DIR / "seoul_연령별_성별_등록현황.xlsx"
+    df_seoul_age = _parse_seoul_age_gender_file(seoul_age_path)
+    df_seoul_age.to_csv(PROCESSED_DIR / "age_gender_distribution_full.csv", index=False, encoding="utf-8-sig")
+    print(f"  -> {len(df_seoul_age)} rows 저장")
+
+    age_summary = build_age_distribution_summary(df_seoul_age)
+    age_summary.to_csv(PROCESSED_DIR / "age_distribution.csv", index=False, encoding="utf-8-sig")
+    print(age_summary)
 
     print("\n✅ 전처리 완료")
 

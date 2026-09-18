@@ -33,11 +33,12 @@ def source_badge(is_real: bool):
 df_lifespan, is_real_lifespan = data_loader.load_lifespan_data()
 df_mileage, is_real_mileage = data_loader.load_mileage_data()
 df_trend, is_real_trend = data_loader.load_lifespan_trend()
-df_age, is_real_age = data_loader.load_age_preference_data()
+df_age, is_real_age = data_loader.load_age_distribution_data()
+df_age_gender, is_real_age_gender = data_loader.load_age_gender_trend()
 df_cost, is_real_cost = data_loader.load_maintenance_cost_data()
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
-    ["📊 차급별 평균 사용기간", "🛣️ 주행거리 분석", "👥 연령대별 선호 차종", "💰 유지비 분석", "🔍 내 차 비교"]
+    ["📊 차급별 평균 사용기간", "🛣️ 주행거리 분석", "👥 연령대별 보유 현황", "💰 유지비 분석", "🔍 내 차 비교"]
 )
 
 # ── Tab 1: 차급별 평균 사용기간 ──────────────────────────
@@ -91,22 +92,42 @@ with tab2:
     st.plotly_chart(fig_m, use_container_width=True)
     st.dataframe(df_mileage, use_container_width=True)
 
-# ── Tab 3: 연령대별 선호 차종 ────────────────────────────
+# ── Tab 3: 연령대별 자동차 보유 현황 ─────────────────────
 with tab3:
-    st.subheader("연령대별 차급 선호 비율")
+    st.subheader("연령대별 자동차 등록(보유) 현황")
     source_badge(is_real_age)
+    if is_real_age:
+        st.caption("출처: 서울 열린데이터광장 — 자동차등록현황(성별/연령별), 2025년 기준")
 
     fig2 = px.bar(
-        df_age, x="연령대", y="선호비율", color="차급",
-        barmode="stack",
-        labels={"선호비율": "선호 비율 (%)"},
+        df_age, x="연령대", y="등록대수",
+        text="비중(%)",
+        labels={"등록대수": "등록대수 (대)"},
+        color="연령대",
     )
+    fig2.update_traces(texttemplate="%{text}%", textposition="outside")
     st.plotly_chart(fig2, use_container_width=True)
+    st.dataframe(df_age, use_container_width=True)
 
-    selected_age = st.selectbox("연령대를 선택해 상세 비율을 확인하세요", df_age["연령대"].unique())
-    sub = df_age[df_age["연령대"] == selected_age].sort_values("선호비율", ascending=False)
-    fig2b = px.pie(sub, names="차급", values="선호비율", title=f"{selected_age} 선호 차급 비중")
-    st.plotly_chart(fig2b, use_container_width=True)
+    if is_real_age_gender and not df_age_gender.empty:
+        st.markdown("#### 성별 비교 (최신연도)")
+        latest_year = df_age_gender["연도"].max()
+        sub = df_age_gender[df_age_gender["연도"] == latest_year]
+        order = ["10대 이하", "20대", "30대", "40대", "50대", "60대", "70대", "80대", "90대 이상"]
+        fig2b = px.bar(
+            sub, x="연령대", y="등록대수", color="성별", barmode="group",
+            category_orders={"연령대": order},
+            labels={"등록대수": "등록대수 (대)"},
+        )
+        st.plotly_chart(fig2b, use_container_width=True)
+
+        st.markdown("#### 연도별 추이 (2023~2025)")
+        trend_sub = df_age_gender.groupby(["연도", "연령대"], as_index=False)["등록대수"].sum()
+        fig2c = px.line(
+            trend_sub, x="연도", y="등록대수", color="연령대", markers=True,
+            category_orders={"연령대": order},
+        )
+        st.plotly_chart(fig2c, use_container_width=True)
 
 # ── Tab 4: 유지비 분석 ───────────────────────────────────
 with tab4:

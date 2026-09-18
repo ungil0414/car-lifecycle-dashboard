@@ -67,6 +67,17 @@ def get_mileage_data() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def get_age_distribution_data() -> pd.DataFrame:
+    """연령대별 자동차 등록 비중(%) - 가상 데이터 (실제 데이터 스키마와 동일한 형태)"""
+    order = ["10대 이하", "20대", "30대", "40대", "50대", "60대", "70대", "80대", "90대 이상"]
+    weights = np.array([0.1, 5.0, 15.0, 22.0, 27.0, 20.0, 8.0, 2.5, 0.4])
+    weights = weights + RNG.normal(0, 0.3, size=len(weights))
+    weights = np.clip(weights, 0.05, None)
+    weights = weights / weights.sum() * 100
+    counts = (weights * 30000).astype(int)  # 임의 스케일
+    return pd.DataFrame({"연령대": order, "등록대수": counts, "비중(%)": weights.round(1)})
+
+
 def get_maintenance_cost_data() -> pd.DataFrame:
     """차급 x 연료타입별 연간 예상 유지비(만원) - 가상 데이터
     (보험료 + 정비비 + 연료비 추정치 합산 컨셉)
