@@ -4,9 +4,6 @@ sample_data.py
 ⚠️ 이 파일은 실제 공공데이터가 준비되기 전까지 대시보드 구조를 테스트하기 위한
    '가상 데이터'를 생성합니다. 실제 데이터가 확보되면 data_loader.py 에서
    이 함수 대신 실제 CSV를 읽도록 교체합니다.
-
-   숫자는 뉴스·통계 기사에서 확인한 대략적인 범위(예: 국산차 평균 폐차주기 15~16년,
-   수입차 13~14년)를 참고해 현실적인 느낌으로 만들었을 뿐, 실제 통계값이 아닙니다.
 """
 
 import numpy as np
@@ -35,25 +32,6 @@ def get_lifespan_data() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def get_age_preference_data() -> pd.DataFrame:
-    """연령대별 차급 선호 비율(%) - 가상 데이터"""
-    rows = []
-    weight_profile = {
-        "20대": [0.30, 0.25, 0.20, 0.10, 0.05, 0.10],
-        "30대": [0.15, 0.20, 0.25, 0.20, 0.05, 0.15],
-        "40대": [0.05, 0.10, 0.20, 0.30, 0.15, 0.20],
-        "50대": [0.05, 0.05, 0.15, 0.30, 0.25, 0.20],
-        "60대 이상": [0.05, 0.10, 0.15, 0.25, 0.30, 0.15],
-    }
-    for age, weights in weight_profile.items():
-        noisy = np.array(weights) + RNG.normal(0, 0.01, size=len(weights))
-        noisy = np.clip(noisy, 0.01, None)
-        noisy = noisy / noisy.sum()
-        for cls, w in zip(CAR_CLASSES, noisy):
-            rows.append({"연령대": age, "차급": cls, "선호비율": round(w * 100, 1)})
-    return pd.DataFrame(rows)
-
-
 def get_mileage_data() -> pd.DataFrame:
     """차급별 평균 누적주행거리(km) - 가상 데이터"""
     base_km = {"경형": 90000, "소형": 110000, "준중형": 115000, "중형": 120000, "대형": 125000, "수입차": 100000}
@@ -74,14 +52,31 @@ def get_age_distribution_data() -> pd.DataFrame:
     weights = weights + RNG.normal(0, 0.3, size=len(weights))
     weights = np.clip(weights, 0.05, None)
     weights = weights / weights.sum() * 100
-    counts = (weights * 30000).astype(int)  # 임의 스케일
+    counts = (weights * 30000).astype(int)
     return pd.DataFrame({"연령대": order, "등록대수": counts, "비중(%)": weights.round(1)})
 
 
+def get_age_preference_data() -> pd.DataFrame:
+    """연령대별 차급 선호 비율(%) - 가상 데이터 (구버전 호환용, 더 이상 app에서 사용 안 함)"""
+    rows = []
+    weight_profile = {
+        "20대": [0.30, 0.25, 0.20, 0.10, 0.05, 0.10],
+        "30대": [0.15, 0.20, 0.25, 0.20, 0.05, 0.15],
+        "40대": [0.05, 0.10, 0.20, 0.30, 0.15, 0.20],
+        "50대": [0.05, 0.05, 0.15, 0.30, 0.25, 0.20],
+        "60대 이상": [0.05, 0.10, 0.15, 0.25, 0.30, 0.15],
+    }
+    for age, weights in weight_profile.items():
+        noisy = np.array(weights) + RNG.normal(0, 0.01, size=len(weights))
+        noisy = np.clip(noisy, 0.01, None)
+        noisy = noisy / noisy.sum()
+        for cls, w in zip(CAR_CLASSES, noisy):
+            rows.append({"연령대": age, "차급": cls, "선호비율": round(w * 100, 1)})
+    return pd.DataFrame(rows)
+
+
 def get_maintenance_cost_data() -> pd.DataFrame:
-    """차급 x 연료타입별 연간 예상 유지비(만원) - 가상 데이터
-    (보험료 + 정비비 + 연료비 추정치 합산 컨셉)
-    """
+    """차급 x 연료타입별 연간 예상 유지비(만원) - 가상 데이터 (실제 데이터 없을 때 fallback)"""
     base_cost = {
         "경형": 180, "소형": 220, "준중형": 260,
         "중형": 320, "대형": 420, "수입차": 550,

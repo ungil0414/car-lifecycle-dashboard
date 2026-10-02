@@ -4,7 +4,7 @@ data_loader.py
 data/processed/ 폴더에 전처리된 실제 데이터 CSV가 있으면 이를 우선 사용하고,
 없으면 sample_data.py 의 가상 데이터로 자동 대체합니다.
 
-실제 KOSIS 원본 데이터는 data/raw/ 에 있고,
+실제 KOSIS/서울시 원본 데이터는 data/raw/ 에 있고,
 src/preprocess_real_data.py 를 실행하면 data/processed/ 에 정리된 CSV가 생성됩니다.
 """
 

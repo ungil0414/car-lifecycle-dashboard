@@ -1,15 +1,8 @@
 """
 preprocess_real_data.py
 
-KOSIS에서 받은 원본 엑셀 2개를 읽어서:
-1. 분석하기 쉬운 '긴 형태(long format)' 데이터로 변환 (data/processed/*_full.csv)
-2. 대시보드에 바로 쓸 수 있는 '차급별 평균 사용연수 / 평균 주행거리' 요약 데이터로 가공
-   (data/processed/lifespan.csv, data/processed/mileage.csv)
-
-핵심 아이디어:
-- KOSIS 원본은 '차령 구간(예: 5~6년)'별 검사대수만 제공하고, 정확한 평균값은 주지 않음
-- 그래서 각 구간의 '중간값(대푯값)'을 가정해서 가중평균을 직접 계산함
-  → 이 부분은 발표 때 "왜 이 가정을 썼는지" 설명이 필요한 지점이라 README/보고서에 반드시 명시할 것
+원본 공공데이터(KOSIS 엑셀 2개 + 서울 열린데이터광장 엑셀 1개)를 읽어서
+대시보드에 바로 쓸 수 있는 형태로 가공합니다.
 
 실행: python src/preprocess_real_data.py
 """
@@ -21,26 +14,44 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 RAW_DIR = BASE_DIR / "data" / "raw"
 PROCESSED_DIR = BASE_DIR / "data" / "processed"
 
+# ── 1. 차령별 데이터 (평균 사용연수) ──────────────────────
 # 차령 구간 → 대표 연수(중간값). '15년 이상'은 open-ended라 18년으로 가정.
 AGE_MIDPOINT = {
-    "4년 이하": 2.0,
-    "5~6년": 5.5,
-    "7~8년": 7.5,
-    "9~10년": 9.5,
-    "11~12년": 11.5,
-    "13~14년": 13.5,
-    "15년 이상": 18.0,
+    "4년 이하": 2.0, "5~6년": 5.5, "7~8년": 7.5, "9~10년": 9.5,
+    "11~12년": 11.5, "13~14년": 13.5, "15년 이상": 18.0,
 }
 
+# ── 2. 주행거리별 데이터 ──────────────────────────────────
 # 주행거리 구간 → 대표 주행거리(km, 중간값). '25만km 이상'은 30만으로 가정.
 MILEAGE_MIDPOINT = {
-    "5만km 미만": 25_000,
-    "5만km~10만km 미만": 75_000,
-    "10만km~15만km 미만": 125_000,
-    "15만km~20만km 미만": 175_000,
-    "20만km~25만km 미만": 225_000,
-    "25만km이상": 300_000,
+    "5만km 미만": 25_000, "5만km~10만km 미만": 75_000,
+    "10만km~15만km 미만": 125_000, "15만km~20만km 미만": 175_000,
+    "20만km~25만km 미만": 225_000, "25만km이상": 300_000,
 }
+
+# ── 3. 유지비 계산 상수 ───────────────────────────────────
+# 차급별 대표 배기량(cc) — 자동차관리법 시행규칙상 규모 구분 기준(1000/1600/2000cc)에
+# 해당하는 대표 모델의 실제 배기량 사용 (경형=모닝 998cc, 소형=아반떼 1598cc,
+# 중형=쏘나타 1999cc, 대형=그랜저 2497cc)
+REPRESENTATIVE_DISPLACEMENT_CC = {"경형": 998, "소형": 1598, "중형": 1999, "대형": 2497}
+
+# 오피넷(한국석유공사) 2026년 9월 기준 전국 평균 판매가격(원/리터)
+FUEL_PRICE_PER_LITER = {"휘발유": 1859, "경유": 1844}
+
+# 차급별 대표 공인연비(km/L) — 국토부/에너지공단 공인연비 공개자료 기준 대표값 가정
+FUEL_EFFICIENCY_KM_PER_L = {"경형": 15.0, "소형": 13.5, "중형": 11.5, "대형": 9.5}
+
+
+def _car_tax_per_year(cc: int) -> float:
+    """배기량 구간별 cc당 자동차세액(원) — 지방세법 시행령 제131조, 비영업용 승용차 기준.
+    지방교육세(자동차세의 30%) 포함 금액을 반환한다."""
+    if cc <= 1000:
+        base = cc * 80
+    elif cc <= 1600:
+        base = cc * 140
+    else:
+        base = cc * 200
+    return base * 1.3
 
 
 def _parse_kosis_wide_file(path: Path) -> pd.DataFrame:
@@ -56,7 +67,7 @@ def _parse_kosis_wide_file(path: Path) -> pd.DataFrame:
 
     labels = raw.iloc[3:, 0:3].copy()
     labels.columns = ["용도", "차종", "규모"]
-    labels = labels.ffill()  # 병합된 셀(NaN) 위 값으로 채우기
+    labels = labels.ffill()
     data = raw.iloc[3:, 3:].reset_index(drop=True)
     labels = labels.reset_index(drop=True)
 
@@ -64,7 +75,7 @@ def _parse_kosis_wide_file(path: Path) -> pd.DataFrame:
     for col_idx in range(data.shape[1]):
         year, bin_name, metric = years[col_idx], bins_[col_idx], metrics[col_idx]
         if bin_name == "합계" or metric != "검사대수 (대)":
-            continue  # 요약 열/부적합률 열은 스킵 (필요시 나중에 따로 처리)
+            continue
         col_values = pd.to_numeric(data.iloc[:, col_idx], errors="coerce")
         for row_idx, val in enumerate(col_values):
             if pd.isna(val):
@@ -147,7 +158,6 @@ def build_lifespan_trend(df_age_full: pd.DataFrame) -> pd.DataFrame:
 def _parse_seoul_age_gender_file(path: Path) -> pd.DataFrame:
     """서울 열린데이터광장 '자동차등록현황(성별/연령별)' 파일을 긴 형태로 변환.
     반환 컬럼: 연도, 성별, 연령대, 등록대수
-    (원본은 성별/연령대가 병합 셀로 되어 있어 ffill 필요)
     """
     raw = pd.read_excel(path, sheet_name="데이터", header=None)
     years = raw.iloc[0, 2:].tolist()
@@ -163,7 +173,7 @@ def _parse_seoul_age_gender_file(path: Path) -> pd.DataFrame:
         gender = labels.loc[row_idx, "성별"]
         age = labels.loc[row_idx, "연령대"]
         if gender == "법인 및 사업자" or age == "소계":
-            continue  # 개인 소유 차량만 분석 대상으로 함
+            continue
         for col_idx, year in enumerate(years):
             val = pd.to_numeric(data.iloc[row_idx, col_idx], errors="coerce")
             if pd.isna(val):
@@ -183,6 +193,33 @@ def build_age_distribution_summary(df_age_full: pd.DataFrame, year: int = 2025) 
     return grouped
 
 
+def build_maintenance_cost_summary(df_lifespan: pd.DataFrame, df_mileage: pd.DataFrame) -> pd.DataFrame:
+    """차급 x 연료별 연간 예상 유지비 = 자동차세 + 유류비 (보험료/정비비는 개인차가 커서 제외)"""
+    merged = df_lifespan.merge(df_mileage, on="차급")
+    merged["연간_주행거리_km"] = merged["평균_누적주행거리_km"] / merged["평균_사용연수"]
+
+    rows = []
+    for _, row in merged.iterrows():
+        cls = row["차급"]
+        annual_km = row["연간_주행거리_km"]
+        cc = REPRESENTATIVE_DISPLACEMENT_CC[cls]
+        tax = _car_tax_per_year(cc)
+        efficiency = FUEL_EFFICIENCY_KM_PER_L[cls]
+        for fuel, price in FUEL_PRICE_PER_LITER.items():
+            fuel_cost = (annual_km / efficiency) * price
+            total = tax + fuel_cost
+            rows.append({
+                "차급": cls, "연료": fuel,
+                "자동차세_원": int(round(tax, -2)),
+                "유류비_원": int(round(fuel_cost, -2)),
+                "연간_예상유지비_만원": round(total / 10_000, 1),
+            })
+    order = ["경형", "소형", "중형", "대형"]
+    result = pd.DataFrame(rows)
+    result["차급"] = pd.Categorical(result["차급"], categories=order, ordered=True)
+    return result.sort_values(["차급", "연료"]).reset_index(drop=True)
+
+
 def main():
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -192,12 +229,10 @@ def main():
     print("차령별 데이터 파싱 중...")
     df_age_full = _parse_kosis_wide_file(age_path)
     df_age_full.to_csv(PROCESSED_DIR / "age_distribution_full.csv", index=False, encoding="utf-8-sig")
-    print(f"  -> {len(df_age_full)} rows 저장 (age_distribution_full.csv)")
 
     print("주행거리별 데이터 파싱 중...")
     df_mileage_full = _parse_kosis_wide_file(mileage_path)
     df_mileage_full.to_csv(PROCESSED_DIR / "mileage_distribution_full.csv", index=False, encoding="utf-8-sig")
-    print(f"  -> {len(df_mileage_full)} rows 저장 (mileage_distribution_full.csv)")
 
     print("차급별 평균 사용연수 요약 계산 중...")
     lifespan_summary = build_lifespan_summary(df_age_full)
@@ -212,17 +247,20 @@ def main():
     print("\n연도별 사용연수 추이 계산 중...")
     trend = build_lifespan_trend(df_age_full)
     trend.to_csv(PROCESSED_DIR / "lifespan_trend.csv", index=False, encoding="utf-8-sig")
-    print(trend.tail(8))
 
     print("\n서울시 연령대별/성별 등록현황 파싱 중...")
     seoul_age_path = RAW_DIR / "seoul_연령별_성별_등록현황.xlsx"
     df_seoul_age = _parse_seoul_age_gender_file(seoul_age_path)
     df_seoul_age.to_csv(PROCESSED_DIR / "age_gender_distribution_full.csv", index=False, encoding="utf-8-sig")
-    print(f"  -> {len(df_seoul_age)} rows 저장")
 
     age_summary = build_age_distribution_summary(df_seoul_age)
     age_summary.to_csv(PROCESSED_DIR / "age_distribution.csv", index=False, encoding="utf-8-sig")
     print(age_summary)
+
+    print("\n차급별 유지비(자동차세+유류비) 계산 중...")
+    maintenance_summary = build_maintenance_cost_summary(lifespan_summary, mileage_summary)
+    maintenance_summary.to_csv(PROCESSED_DIR / "maintenance_cost.csv", index=False, encoding="utf-8-sig")
+    print(maintenance_summary)
 
     print("\n✅ 전처리 완료")
 

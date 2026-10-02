@@ -7,7 +7,6 @@ app.py — 자동차 생애주기 분석 대시보드 (Streamlit)
 import sys
 from pathlib import Path
 
-# 프로젝트 루트를 경로에 추가 (src 모듈 import를 위해)
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
@@ -19,12 +18,12 @@ from src import data_loader
 st.set_page_config(page_title="자동차 생애주기 분석 대시보드", layout="wide")
 
 st.title("🚗 자동차 생애주기 분석 대시보드")
-st.caption("공공데이터(KOSIS 자동차검사현황) 기반 차량 교체주기 · 주행거리 · 연령대별 선호 · 유지비 분석 및 내 차 비교")
+st.caption("공공데이터(KOSIS·서울 열린데이터광장) 기반 차량 교체주기 · 주행거리 · 연령대별 보유 현황 · 유지비 분석 및 내 차 비교")
 
 
 def source_badge(is_real: bool):
     if is_real:
-        st.caption("✅ 실제 공공데이터(KOSIS) 기반")
+        st.caption("✅ 실제 공공데이터 기반")
     else:
         st.caption("⚠️ 샘플(가상) 데이터 — 실제 데이터 미연동 상태")
 
@@ -140,6 +139,18 @@ with tab4:
         labels={"연간_예상유지비_만원": "연간 예상 유지비 (만원)"},
     )
     st.plotly_chart(fig3, use_container_width=True)
+    st.dataframe(df_cost, use_container_width=True)
+
+    if is_real_cost:
+        st.markdown(
+            "> **계산 방법**: 유지비 = **자동차세**(지방세법 시행령, 배기량 기준 — 차급별 대표 모델 "
+            "배기량 적용) + **유류비**(실제 평균 주행거리 ÷ 공인연비 × 오피넷 전국 평균 유가, "
+            "2026년 9월 기준). 연간 주행거리는 실제 데이터(평균 누적주행거리 ÷ 평균 사용연수)로 "
+            "역산했습니다.\n>\n"
+            "> ⚠️ **보험료·정비비는 운전자 개인/이력에 따른 편차가 너무 커서 신뢰할 수 있는 공식 "
+            "평균 통계가 없어 이번 분석에서는 제외했습니다.** 따라서 실제 체감 유지비보다는 낮게 "
+            "나올 수 있습니다."
+        )
 
 # ── Tab 5: 내 차 비교 ────────────────────────────────────
 with tab5:
@@ -188,5 +199,6 @@ with tab5:
 st.markdown("---")
 st.caption(
     "데이터 출처: KOSIS(국가통계포털) 자동차검사현황(한국교통안전공단), "
-    "서울 열린데이터광장, 통계청 (일부 항목은 실 데이터 연동 전 샘플 데이터로 대체 표시됨)"
+    "서울 열린데이터광장(자동차등록현황 성별/연령별), 지방세법 시행령(자동차세), "
+    "오피넷/한국석유공사(유가)"
 )
