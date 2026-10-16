@@ -36,9 +36,9 @@ df_age, is_real_age = data_loader.load_age_distribution_data()
 df_age_gender, is_real_age_gender = data_loader.load_age_gender_trend()
 df_cost, is_real_cost = data_loader.load_maintenance_cost_data()
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab_model, tab6 = st.tabs([
     "📊 차급별 평균 사용기간", "🛣️ 주행거리 분석", "👥 연령대별 보유 현황",
-    "💰 유지비 분석", "🧮 총소유비용(TCO) 계산기", "🔍 내 차 비교",
+    "💰 유지비 분석", "🧮 총소유비용(TCO) 계산기", "🚗 모델별 TCO 비교", "🔍 내 차 비교",
 ])
 
 # ── Tab 1: 차급별 평균 사용기간 ──────────────────────────
@@ -238,6 +238,71 @@ with tab5:
 
 **가정(공식 통계 아님)**: 차급별 대표 배기량(모닝·아반떼·쏘나타·그랜저), 차급별 대표 연비, 연료·세율·유가·보험료가 보유 기간 동안 변하지 않는다는 가정
 **제외 항목**: 구매가·감가상각, 정비·소모품비, 주차·통행료
+"""
+        )
+
+# ── Tab: 모델별 TCO 비교 ─────────────────────────────────
+with tab_model:
+    st.subheader("모델별 TCO 비교 — 그랜저 vs K5 vs 쏘나타, 몇 년 타면 얼마?")
+    st.caption(
+        "현대·기아 대표 모델의 실제 배기량과 공식 복합연비를 넣어 자동차세·유류비·보험료를 계산합니다. "
+        "(가솔린 기본 엔진 기준, 구매가·감가상각·정비비 제외)"
+    )
+    km_by_class_m = cost_model.annual_km_by_class(df_lifespan, df_mileage)
+
+    m_c1, m_c2, m_c3, m_c4 = st.columns(4)
+    with m_c1:
+        picked = st.multiselect(
+            "비교할 모델 (2개 이상)", list(cost_model.MODEL_SPECS.keys()),
+            default=["쏘나타", "K5", "그랜저"], key="model_pick",
+        )
+    with m_c2:
+        m_years = st.slider("보유 예상 기간(년)", 1, 20, 10, key="model_years")
+    with m_c3:
+        m_buy_age = st.number_input("구매 시점의 차령(새 차=0년)", min_value=0, max_value=15, value=0, key="model_buy_age")
+    with m_c4:
+        m_ins = st.number_input(
+            "연 보험료(만원)", min_value=0, max_value=300,
+            value=int(cost_model.AVG_INSURANCE_PREMIUM_WON / 10_000), step=5, key="model_insurance",
+        )
+
+    if len(picked) < 2:
+        st.info("모델을 2개 이상 골라주세요.")
+    else:
+        res = cost_model.compare_models(picked, km_by_class_m, m_years, int(m_buy_age) + 1, m_ins * 10_000)
+        cheapest = res.iloc[0]
+        priciest = res.iloc[-1]
+        k1, k2, k3 = st.columns(3)
+        k1.metric("가장 저렴", f"{cheapest['모델']} {cheapest['총소유비용_만원']:,.0f}만원")
+        k2.metric("가장 비쌈", f"{priciest['모델']} {priciest['총소유비용_만원']:,.0f}만원")
+        k3.metric(f"{m_years}년 차이", f"{priciest['총소유비용_만원'] - cheapest['총소유비용_만원']:,.0f}만원")
+
+        long_m = res.melt(
+            id_vars="모델", value_vars=["자동차세_합계_만원", "유류비_합계_만원", "보험료_합계_만원"],
+            var_name="항목", value_name="금액_만원",
+        )
+        long_m["항목"] = long_m["항목"].map(
+            {"자동차세_합계_만원": "자동차세", "유류비_합계_만원": "유류비", "보험료_합계_만원": "보험료"})
+        fig_m = px.bar(
+            long_m, x="모델", y="금액_만원", color="항목", barmode="stack",
+            category_orders={"모델": res["모델"].tolist()},
+            labels={"금액_만원": f"{m_years}년 총비용 (만원)"},
+        )
+        st.plotly_chart(fig_m, width="stretch")
+        st.dataframe(
+            res.assign(총소유비용_만원=res["총소유비용_만원"].round(0)).round(0),
+            width="stretch", hide_index=True,
+        )
+
+    with st.expander("제원 출처와 한계 (발표/보고서 근거)"):
+        spec_df = pd.DataFrame(cost_model.MODEL_SPECS).T.reset_index().rename(columns={"index": "모델"})
+        st.dataframe(spec_df, width="stretch", hide_index=True)
+        st.markdown(
+            """
+- 배기량·복합연비는 제조사 공식 제원(기아 공식 사이트, 카눈 제원 페이지)에서 확인한 값입니다. 연비는 타이어 크기에 따라 달라 **중간 크기 타이어 기준**을 썼고, 스포티지는 범위(10.5~12.3)의 중간값입니다.
+- **모델별 사용기간·주행거리 통계는 공공데이터에 없어서**, 연간 주행거리는 모델이 속한 **차급의 평균값**을 그대로 썼습니다. 즉 모델 간 차이는 배기량(자동차세)·연비(유류비)에서만 생깁니다.
+- 차급은 승용차 배기량 구분(경형 1,000cc 미만 / 소형 1,600cc 미만 / 중형 2,000cc 미만 / 대형 2,000cc 이상)을 따랐습니다. 그래서 1,598cc인 투싼·스포티지도 **'소형'**으로 분류되어, 표본이 적고 사용연수가 길게 나오는 소형 차급의 주행거리가 적용됩니다.
+- 보험료는 모든 모델에 같은 평균값을 적용했습니다(앱에서 조정 가능). 구매가·감가상각·정비비는 제외했습니다.
 """
         )
 

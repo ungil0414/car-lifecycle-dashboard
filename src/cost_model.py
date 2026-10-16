@@ -30,6 +30,22 @@ FUEL_EFFICIENCY_KM_PER_L = {"경형": 15.0, "소형": 13.5, "중형": 11.5, "대
 # ── 유가(원/L): 오피넷(한국석유공사) 2026년 9월 전국 평균 판매가격 ──
 FUEL_PRICE_PER_LITER = {"휘발유": 1859, "경유": 1844}
 
+# ── 대표 모델 제원 (가솔린 기본 엔진) ─────────────────────────
+# 배기량·복합연비는 제조사 공식 제원(기아 공식 사이트, 카눈 가격표/제원 페이지)에서 확인한 값.
+# 연비는 타이어 크기에 따라 달라지므로 '중간 크기 타이어' 기준(선택지가 하나면 그 값)을 썼다.
+# 스포티지는 2WD/4WD·타이어에 따라 10.5~12.3이라 범위 중간값(11.4)을 사용.
+# 차급은 승용차 규모 구분(경형 1000cc 미만, 소형 1600cc 미만, 중형 2000cc 미만, 대형 2000cc 이상)에 따라 분류.
+MODEL_SPECS = {
+    "모닝":     {"브랜드": "기아",   "차급": "경형", "배기량_cc": 998,  "연비_km_L": 14.7},
+    "아반떼":   {"브랜드": "현대",   "차급": "소형", "배기량_cc": 1598, "연비_km_L": 14.8},
+    "K3":       {"브랜드": "기아",   "차급": "소형", "배기량_cc": 1598, "연비_km_L": 14.4},
+    "투싼":     {"브랜드": "현대",   "차급": "소형", "배기량_cc": 1598, "연비_km_L": 12.5},
+    "스포티지": {"브랜드": "기아",   "차급": "소형", "배기량_cc": 1598, "연비_km_L": 11.4},
+    "쏘나타":   {"브랜드": "현대",   "차급": "중형", "배기량_cc": 1999, "연비_km_L": 12.0},
+    "K5":       {"브랜드": "기아",   "차급": "중형", "배기량_cc": 1999, "연비_km_L": 12.6},
+    "그랜저":   {"브랜드": "현대",   "차급": "대형", "배기량_cc": 2497, "연비_km_L": 11.4},
+}
+
 # ── 보험료(원/년): 개인용 자동차보험 1대당 평균 보험료 (보험개발원, 2025년 약 68만원) ──
 # 차급·연령·경력별 공식 평균은 확인하지 못해 모든 차급에 같은 값을 쓰고, 앱에서 사용자가 조정하게 한다.
 AVG_INSURANCE_PREMIUM_WON = 680_000
@@ -79,14 +95,18 @@ def annual_km_by_class(df_lifespan: pd.DataFrame, df_mileage: pd.DataFrame) -> d
 
 
 def yearly_cost_table(car_class: str, fuel: str, annual_km: float, years: int, start_age: int = 1,
-                      insurance: float = AVG_INSURANCE_PREMIUM_WON) -> pd.DataFrame:
+                      insurance: float = AVG_INSURANCE_PREMIUM_WON,
+                      cc: int | None = None, efficiency: float | None = None) -> pd.DataFrame:
     """보유 기간 동안의 연도별 비용표.
+
+    cc, efficiency : 지정하면 차급 대표값 대신 이 값(특정 모델의 배기량·연비)을 쓴다.
 
     start_age : 구매 시점의 차령(년차). 새 차 = 1, 3년 탄 중고차 = 4.
     insurance : 연간 보험료(원). 반환 컬럼: 보유연차, 차령, 자동차세_원, 유류비_원, 보험료_원, 연간합계_원, 누적합계_원
     """
-    cc = REPRESENTATIVE_DISPLACEMENT_CC[car_class]
-    fuel_cost = annual_fuel_cost(annual_km, FUEL_EFFICIENCY_KM_PER_L[car_class], FUEL_PRICE_PER_LITER[fuel])
+    cc = cc if cc is not None else REPRESENTATIVE_DISPLACEMENT_CC[car_class]
+    eff = efficiency if efficiency is not None else FUEL_EFFICIENCY_KM_PER_L[car_class]
+    fuel_cost = annual_fuel_cost(annual_km, eff, FUEL_PRICE_PER_LITER[fuel])
 
     rows, cumulative = [], 0.0
     for i in range(1, years + 1):
@@ -112,6 +132,25 @@ def compare_classes(km_by_class: dict, fuel: str, years: int, start_age: int = 1
         t = yearly_cost_table(cls, fuel, km_by_class[cls], years, start_age, insurance)
         rows.append({
             "차급": cls,
+            "총소유비용_만원": t["누적합계_원"].iloc[-1] / 10_000,
+            "자동차세_합계_만원": t["자동차세_원"].sum() / 10_000,
+            "유류비_합계_만원": t["유류비_원"].sum() / 10_000,
+            "보험료_합계_만원": t["보험료_원"].sum() / 10_000,
+        })
+    return pd.DataFrame(rows).sort_values("총소유비용_만원").reset_index(drop=True)
+
+
+def compare_models(model_names: list, km_by_class: dict, years: int, start_age: int = 1,
+                   insurance: float = AVG_INSURANCE_PREMIUM_WON, fuel: str = "휘발유") -> pd.DataFrame:
+    """선택한 모델들을 같은 조건으로 비교. 연간 주행거리는 모델이 속한 차급의 값을 쓴다(모델별 통계 없음)."""
+    rows = []
+    for name in model_names:
+        spec = MODEL_SPECS[name]
+        t = yearly_cost_table(spec["차급"], fuel, km_by_class[spec["차급"]], years, start_age,
+                              insurance, cc=spec["배기량_cc"], efficiency=spec["연비_km_L"])
+        rows.append({
+            "모델": name, "브랜드": spec["브랜드"], "차급": spec["차급"],
+            "배기량_cc": spec["배기량_cc"], "연비_km_L": spec["연비_km_L"],
             "총소유비용_만원": t["누적합계_원"].iloc[-1] / 10_000,
             "자동차세_합계_만원": t["자동차세_원"].sum() / 10_000,
             "유류비_합계_만원": t["유류비_원"].sum() / 10_000,
