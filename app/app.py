@@ -141,7 +141,7 @@ with tab4:
             "+ **유류비**(연간 주행거리 ÷ 연비 × 오피넷 전국 평균 유가, 2026년 9월). "
             "연간 주행거리는 실제 데이터(평균 누적주행거리 ÷ 평균 사용연수)로 역산했고, "
             "연비는 차급별 대표값을 **가정**했습니다.\n>\n"
-            "> ⚠️ 보험료·정비비는 운전자 편차가 커서 제외했습니다. 실제 체감 유지비보다 낮게 나올 수 있습니다."
+            "> ⚠️ 이 탭의 유지비는 자동차세+유류비만 포함합니다(보험료는 🧮 TCO 계산기 탭에서 반영). 실제 체감 유지비보다 낮게 나올 수 있습니다."
         )
 
 # ── Tab 5: TCO 계산기 ────────────────────────────────────
@@ -149,13 +149,13 @@ with tab5:
     st.subheader("총소유비용(TCO) 계산기 — 이 차를 N년 타면 얼마가 들까?")
     st.caption(
         "세금과 기름값처럼 '타는 동안 계속 나가는 돈'을 보유 기간만큼 합산합니다. "
-        "차를 살 때 드는 구매가·감가상각, 보험료·정비비는 포함하지 않습니다."
+        "차를 살 때 드는 구매가·감가상각, 정비비는 포함하지 않습니다."
     )
 
     km_by_class = cost_model.annual_km_by_class(df_lifespan, df_mileage)
     classes = [c for c in cost_model.CAR_CLASSES if c in km_by_class]
 
-    c1, c2, c3, c4 = st.columns(4)
+    c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         tco_class = st.selectbox("차급", classes, index=min(2, len(classes) - 1), key="tco_class")
     with c2:
@@ -164,9 +164,16 @@ with tab5:
         tco_years = st.slider("보유 예상 기간(년)", 1, 20, 10, key="tco_years")
     with c4:
         tco_buy_age = st.number_input("구매 시점의 차령(새 차=0년)", min_value=0, max_value=15, value=0, key="tco_buy_age")
+    with c5:
+        tco_ins_man = st.number_input(
+            "연 보험료(만원)", min_value=0, max_value=300,
+            value=int(cost_model.AVG_INSURANCE_PREMIUM_WON / 10_000), step=5, key="tco_insurance",
+            help="기본값은 보험개발원 2025년 개인용 자동차보험 1대당 평균(약 68만원). 나이·경력·차종에 따라 달라지니 본인 조건에 맞게 바꿔보세요.",
+        )
+    insurance_won = tco_ins_man * 10_000
 
     start_age = int(tco_buy_age) + 1  # 새 차 = 1년차부터
-    table = cost_model.yearly_cost_table(tco_class, tco_fuel, km_by_class[tco_class], tco_years, start_age)
+    table = cost_model.yearly_cost_table(tco_class, tco_fuel, km_by_class[tco_class], tco_years, start_age, insurance_won)
 
     total_man = table["누적합계_원"].iloc[-1] / 10_000
     m1, m2, m3 = st.columns(3)
@@ -174,13 +181,13 @@ with tab5:
     m2.metric("연평균", f"{total_man / tco_years:,.0f}만원")
     m3.metric("월평균", f"{total_man / tco_years / 12:,.1f}만원")
 
-    st.markdown("#### 연도별 비용 구성 (자동차세 vs 유류비)")
+    st.markdown("#### 연도별 비용 구성 (자동차세 · 유류비 · 보험료)")
     long_df = table.melt(
-        id_vars=["보유연차", "차령"], value_vars=["자동차세_원", "유류비_원"],
+        id_vars=["보유연차", "차령"], value_vars=["자동차세_원", "유류비_원", "보험료_원"],
         var_name="항목", value_name="금액_원",
     )
     long_df["금액_만원"] = long_df["금액_원"] / 10_000
-    long_df["항목"] = long_df["항목"].map({"자동차세_원": "자동차세", "유류비_원": "유류비"})
+    long_df["항목"] = long_df["항목"].map({"자동차세_원": "자동차세", "유류비_원": "유류비", "보험료_원": "보험료"})
     fig_year = px.bar(
         long_df, x="보유연차", y="금액_만원", color="항목", barmode="stack",
         labels={"금액_만원": "연간 비용 (만원)", "보유연차": "보유 N년차"},
@@ -197,15 +204,15 @@ with tab5:
     st.plotly_chart(fig_cum, width="stretch")
 
     st.markdown(f"#### 같은 조건({tco_fuel}, {tco_years}년 보유)에서 차급 비교")
-    cmp_df = cost_model.compare_classes(km_by_class, tco_fuel, tco_years, start_age)
+    cmp_df = cost_model.compare_classes(km_by_class, tco_fuel, tco_years, start_age, insurance_won)
     selected_total = cmp_df.loc[cmp_df["차급"] == tco_class, "총소유비용_만원"].iloc[0]
     cmp_df["선택 차급 대비(만원)"] = (cmp_df["총소유비용_만원"] - selected_total).round(0)
 
     cmp_long = cmp_df.melt(
-        id_vars="차급", value_vars=["자동차세_합계_만원", "유류비_합계_만원"],
+        id_vars="차급", value_vars=["자동차세_합계_만원", "유류비_합계_만원", "보험료_합계_만원"],
         var_name="항목", value_name="금액_만원",
     )
-    cmp_long["항목"] = cmp_long["항목"].map({"자동차세_합계_만원": "자동차세", "유류비_합계_만원": "유류비"})
+    cmp_long["항목"] = cmp_long["항목"].map({"자동차세_합계_만원": "자동차세", "유류비_합계_만원": "유류비", "보험료_합계_만원": "보험료"})
     fig_cmp = px.bar(
         cmp_long, x="차급", y="금액_만원", color="항목", barmode="stack",
         category_orders={"차급": cmp_df["차급"].tolist()},
@@ -221,15 +228,16 @@ with tab5:
         km_txt = ", ".join(f"{c} {km_by_class[c]:,.0f}km" for c in classes)
         st.markdown(
             f"""
-**연간 비용(n년차) = 자동차세(n년차) + 유류비** → **TCO = 연간 비용의 N년 합계**
+**연간 비용(n년차) = 자동차세(n년차) + 유류비 + 보험료** → **TCO = 연간 비용의 N년 합계**
 
 - **자동차세** = 배기량 × cc당 세율(1,000cc 이하 80원 / 1,600cc 이하 140원 / 초과 200원) × (1 − 차령 경감률) × 1.3(지방교육세 30%)
 - **차령 경감률** = 3년차 5%, 이후 매년 +5%p, 최대 50%(12년차 이상)
 - **유류비** = 연간 주행거리 ÷ 연비 × 유가 (휘발유 {cost_model.FUEL_PRICE_PER_LITER['휘발유']:,}원/L, 경유 {cost_model.FUEL_PRICE_PER_LITER['경유']:,}원/L — 오피넷 2026년 9월 전국 평균)
+- **보험료** = 개인용 자동차보험 1대당 연평균 보험료 약 68만원(보험개발원, 2025년)을 기본값으로 쓰고 직접 조정 가능. 차급·연령·경력별 공식 평균은 확인하지 못해 모든 차급에 같은 값을 적용
 - **연간 주행거리** = 평균 누적주행거리 ÷ 평균 사용연수 → {km_txt}
 
-**가정(공식 통계 아님)**: 차급별 대표 배기량(모닝·아반떼·쏘나타·그랜저), 차급별 대표 연비, 연료·세율·유가가 보유 기간 동안 변하지 않는다는 가정
-**제외 항목**: 구매가·감가상각, 보험료, 정비·소모품비, 주차·통행료
+**가정(공식 통계 아님)**: 차급별 대표 배기량(모닝·아반떼·쏘나타·그랜저), 차급별 대표 연비, 연료·세율·유가·보험료가 보유 기간 동안 변하지 않는다는 가정
+**제외 항목**: 구매가·감가상각, 정비·소모품비, 주차·통행료
 """
         )
 

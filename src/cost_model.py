@@ -3,17 +3,18 @@ cost_model.py — 유지비 / 총소유비용(TCO) 계산 로직
 
 발표 때 설명하기 쉽도록 '식 하나씩'만 쓰는 단순한 모델로 만들었습니다.
 
-    연간 비용(n년차) = 자동차세(n년차) + 유류비
+    연간 비용(n년차) = 자동차세(n년차) + 유류비 + 보험료
     TCO(N년 보유)    = 연간 비용의 N년 합계
 
   · 자동차세(n년차) = 배기량 × cc당 세율 × (1 − 차령 경감률) × (1 + 지방교육세 30%)
   · 차령 경감률     = 3년차 5%, 이후 매년 5%p 추가, 최대 50% (12년차 이상)
   · 유류비          = 연간 주행거리 ÷ 연비 × 유가
+  · 보험료          = 개인용 자동차보험 1대당 연평균 보험료 (보험개발원 2025년 약 68만원), 사용자가 조정 가능
   · 연간 주행거리   = 평균 누적주행거리 ÷ 평균 사용연수  (KOSIS 실제 데이터로 역산)
 
 ⚠️ 아래 '가정' 항목은 공식 통계가 아니라 분석을 위해 둔 값입니다. 보고서/발표에서
    가정임을 밝히고, 수치를 바꿔도 결과가 크게 달라지지 않는지(민감도)를 함께 보여주면 좋습니다.
-   보험료·정비비·감가상각은 개인 편차가 커서 포함하지 않았습니다.
+   정비비·감가상각은 개인 편차가 커서 포함하지 않았습니다.
 """
 
 import pandas as pd
@@ -28,6 +29,10 @@ FUEL_EFFICIENCY_KM_PER_L = {"경형": 15.0, "소형": 13.5, "중형": 11.5, "대
 
 # ── 유가(원/L): 오피넷(한국석유공사) 2026년 9월 전국 평균 판매가격 ──
 FUEL_PRICE_PER_LITER = {"휘발유": 1859, "경유": 1844}
+
+# ── 보험료(원/년): 개인용 자동차보험 1대당 평균 보험료 (보험개발원, 2025년 약 68만원) ──
+# 차급·연령·경력별 공식 평균은 확인하지 못해 모든 차급에 같은 값을 쓰고, 앱에서 사용자가 조정하게 한다.
+AVG_INSURANCE_PREMIUM_WON = 680_000
 
 # ── 자동차세 (비영업용 승용차) ─────────────────────────────
 EDU_TAX_RATE = 0.30          # 지방교육세: 자동차세액의 30%
@@ -73,11 +78,12 @@ def annual_km_by_class(df_lifespan: pd.DataFrame, df_mileage: pd.DataFrame) -> d
     return dict(zip(merged["차급"], merged["연간_주행거리_km"]))
 
 
-def yearly_cost_table(car_class: str, fuel: str, annual_km: float, years: int, start_age: int = 1) -> pd.DataFrame:
+def yearly_cost_table(car_class: str, fuel: str, annual_km: float, years: int, start_age: int = 1,
+                      insurance: float = AVG_INSURANCE_PREMIUM_WON) -> pd.DataFrame:
     """보유 기간 동안의 연도별 비용표.
 
     start_age : 구매 시점의 차령(년차). 새 차 = 1, 3년 탄 중고차 = 4.
-    반환 컬럼: 보유연차, 차령, 자동차세_원, 유류비_원, 연간합계_원, 누적합계_원
+    insurance : 연간 보험료(원). 반환 컬럼: 보유연차, 차령, 자동차세_원, 유류비_원, 보험료_원, 연간합계_원, 누적합계_원
     """
     cc = REPRESENTATIVE_DISPLACEMENT_CC[car_class]
     fuel_cost = annual_fuel_cost(annual_km, FUEL_EFFICIENCY_KM_PER_L[car_class], FUEL_PRICE_PER_LITER[fuel])
@@ -86,27 +92,29 @@ def yearly_cost_table(car_class: str, fuel: str, annual_km: float, years: int, s
     for i in range(1, years + 1):
         vehicle_year = start_age + i - 1
         tax = car_tax(cc, vehicle_year)
-        total = tax + fuel_cost
+        total = tax + fuel_cost + insurance
         cumulative += total
         rows.append({
             "보유연차": i, "차령": vehicle_year,
-            "자동차세_원": tax, "유류비_원": fuel_cost,
+            "자동차세_원": tax, "유류비_원": fuel_cost, "보험료_원": insurance,
             "연간합계_원": total, "누적합계_원": cumulative,
         })
     return pd.DataFrame(rows)
 
 
-def compare_classes(km_by_class: dict, fuel: str, years: int, start_age: int = 1) -> pd.DataFrame:
+def compare_classes(km_by_class: dict, fuel: str, years: int, start_age: int = 1,
+                    insurance: float = AVG_INSURANCE_PREMIUM_WON) -> pd.DataFrame:
     """모든 차급을 같은 조건(연료·보유기간·구매 차령)으로 비교. 총비용 오름차순."""
     rows = []
     for cls in CAR_CLASSES:
         if cls not in km_by_class:
             continue
-        t = yearly_cost_table(cls, fuel, km_by_class[cls], years, start_age)
+        t = yearly_cost_table(cls, fuel, km_by_class[cls], years, start_age, insurance)
         rows.append({
             "차급": cls,
             "총소유비용_만원": t["누적합계_원"].iloc[-1] / 10_000,
             "자동차세_합계_만원": t["자동차세_원"].sum() / 10_000,
             "유류비_합계_만원": t["유류비_원"].sum() / 10_000,
+            "보험료_합계_만원": t["보험료_원"].sum() / 10_000,
         })
     return pd.DataFrame(rows).sort_values("총소유비용_만원").reset_index(drop=True)
