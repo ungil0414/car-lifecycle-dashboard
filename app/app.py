@@ -246,11 +246,11 @@ with tab_model:
     st.subheader("모델별 TCO 비교 — 그랜저 vs K5 vs 쏘나타, 몇 년 타면 얼마?")
     st.caption(
         "현대·기아 대표 모델의 실제 배기량과 공식 복합연비를 넣어 자동차세·유류비·보험료를 계산합니다. "
-        "(가솔린 기본 엔진 기준, 구매가·감가상각·정비비 제외)"
+        "신차 구매가와 중고 매각가의 차이(감가상각)도 포함합니다. (가솔린 기본 엔진·기본 트림 기준, 정비비·옵션 제외)"
     )
     km_by_class_m = cost_model.annual_km_by_class(df_lifespan, df_mileage)
 
-    m_c1, m_c2, m_c3, m_c4 = st.columns(4)
+    m_c1, m_c2, m_c3, m_c4, m_c5 = st.columns(5)
     with m_c1:
         picked = st.multiselect(
             "비교할 모델 (2개 이상)", list(cost_model.MODEL_SPECS.keys()),
@@ -265,24 +265,34 @@ with tab_model:
             "연 보험료(만원)", min_value=0, max_value=300,
             value=int(cost_model.AVG_INSURANCE_PREMIUM_WON / 10_000), step=5, key="model_insurance",
         )
+    with m_c5:
+        scenario = st.radio(
+            "중고 시세 시나리오", cost_model.RESIDUAL_SCENARIOS, index=1, key="model_scenario",
+            help="낙관=값이 덜 떨어짐, 비관=더 떨어짐. 아래 '제원 출처와 한계'에서 잔존가치율을 볼 수 있어요.",
+        )
 
     if len(picked) < 2:
         st.info("모델을 2개 이상 골라주세요.")
     else:
-        res = cost_model.compare_models(picked, km_by_class_m, m_years, int(m_buy_age) + 1, m_ins * 10_000)
+        res = cost_model.compare_models(picked, km_by_class_m, m_years, int(m_buy_age) + 1, m_ins * 10_000, scenario=scenario)
         cheapest = res.iloc[0]
         priciest = res.iloc[-1]
         k1, k2, k3 = st.columns(3)
         k1.metric("가장 저렴", f"{cheapest['모델']} {cheapest['총소유비용_만원']:,.0f}만원")
         k2.metric("가장 비쌈", f"{priciest['모델']} {priciest['총소유비용_만원']:,.0f}만원")
         k3.metric(f"{m_years}년 차이", f"{priciest['총소유비용_만원'] - cheapest['총소유비용_만원']:,.0f}만원")
+        st.caption(
+            f"시세 시나리오({scenario}) 기준입니다. 낙관~비관 범위로 보면 "
+            + ", ".join(f"{r['모델']} {r['총소유비용_낙관_만원']:,.0f}~{r['총소유비용_비관_만원']:,.0f}만원" for _, r in res.iterrows())
+            + "."
+        )
 
         long_m = res.melt(
-            id_vars="모델", value_vars=["자동차세_합계_만원", "유류비_합계_만원", "보험료_합계_만원"],
+            id_vars="모델", value_vars=["감가상각_합계_만원", "자동차세_합계_만원", "유류비_합계_만원", "보험료_합계_만원"],
             var_name="항목", value_name="금액_만원",
         )
         long_m["항목"] = long_m["항목"].map(
-            {"자동차세_합계_만원": "자동차세", "유류비_합계_만원": "유류비", "보험료_합계_만원": "보험료"})
+            {"감가상각_합계_만원": "감가상각", "자동차세_합계_만원": "자동차세", "유류비_합계_만원": "유류비", "보험료_합계_만원": "보험료"})
         fig_m = px.bar(
             long_m, x="모델", y="금액_만원", color="항목", barmode="stack",
             category_orders={"모델": res["모델"].tolist()},
@@ -297,12 +307,21 @@ with tab_model:
     with st.expander("제원 출처와 한계 (발표/보고서 근거)"):
         spec_df = pd.DataFrame(cost_model.MODEL_SPECS).T.reset_index().rename(columns={"index": "모델"})
         st.dataframe(spec_df, width="stretch", hide_index=True)
+        resid_df = pd.DataFrame({
+            sc: {f"{y}년": f"{cost_model.residual_rate(y, sc) * 100:.0f}%" for y in (1, 3, 5, 7, 10)}
+            for sc in cost_model.RESIDUAL_SCENARIOS
+        })
+        st.markdown("**신차 대비 중고 잔존가치율 (시나리오)**")
+        st.dataframe(resid_df, width="stretch")
         st.markdown(
             """
 - 배기량·복합연비는 제조사 공식 제원(기아 공식 사이트, 카눈 제원 페이지)에서 확인한 값입니다. 연비는 타이어 크기에 따라 달라 **중간 크기 타이어 기준**을 썼고, 스포티지는 범위(10.5~12.3)의 중간값입니다.
 - **모델별 사용기간·주행거리 통계는 공공데이터에 없어서**, 연간 주행거리는 모델이 속한 **차급의 평균값**을 그대로 썼습니다. 즉 모델 간 차이는 배기량(자동차세)·연비(유류비)에서만 생깁니다.
 - 차급은 승용차 배기량 구분(경형 1,000cc 미만 / 소형 1,600cc 미만 / 중형 2,000cc 미만 / 대형 2,000cc 이상)을 따랐습니다. 그래서 1,598cc인 투싼·스포티지도 **'소형'**으로 분류되어, 표본이 적고 사용연수가 길게 나오는 소형 차급의 주행거리가 적용됩니다.
-- 보험료는 모든 모델에 같은 평균값을 적용했습니다(앱에서 조정 가능). 구매가·감가상각·정비비는 제외했습니다.
+- 보험료는 모든 모델에 같은 평균값을 적용했습니다(앱에서 조정 가능). 정비비와 옵션은 제외했습니다.
+- **감가상각** = 신차가 × (구매 시점 잔존율 − 매각 시점 잔존율). 신차가는 가솔린 **기본(최저) 트림** 가격이며 조사 시점이 모델마다 다릅니다(투싼은 2024년형 가격, 그랜저는 2025년형 개소세 인하가).
+- **잔존가치율은 공식 통계가 아니라 가정입니다.** 공개된 두 참고자료(calcmo.kr, telarum.com)의 곡선을 낙관/비관 시나리오로 쓰고 기본은 둘의 평균입니다. 두 자료 모두 조사기관·표본이 명확하지 않아 단정하지 않고 범위로 제시했습니다. 7·10년 값(비관)과 10년 초과 구간은 추정입니다.
+- K3는 신차 가격을 확인하지 못해 비교 목록에서 뺐습니다.
 """
         )
 
