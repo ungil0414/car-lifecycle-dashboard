@@ -11,9 +11,10 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
-from src import cost_model, data_loader
+from src import cost_model, data_loader, sensitivity
 
 st.set_page_config(page_title="자동차 생애주기 분석 대시보드", layout="wide")
 
@@ -36,9 +37,9 @@ df_age, is_real_age = data_loader.load_age_distribution_data()
 df_age_gender, is_real_age_gender = data_loader.load_age_gender_trend()
 df_cost, is_real_cost = data_loader.load_maintenance_cost_data()
 
-tab1, tab2, tab3, tab4, tab5, tab_model, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab_model, tab_sens, tab6 = st.tabs([
     "📊 차급별 평균 사용기간", "🛣️ 주행거리 분석", "👥 연령대별 보유 현황",
-    "💰 유지비 분석", "🧮 총소유비용(TCO) 계산기", "🚗 모델별 TCO 비교", "🔍 내 차 비교",
+    "💰 유지비 분석", "🧮 총소유비용(TCO) 계산기", "🚗 모델별 TCO 비교", "🎯 민감도 분석", "🔍 내 차 비교",
 ])
 
 # ── Tab 1: 차급별 평균 사용기간 ──────────────────────────
@@ -324,6 +325,104 @@ with tab_model:
 - K3는 신차 가격을 확인하지 못해 비교 목록에서 뺐습니다.
 """
         )
+
+# ── Tab: 민감도 분석 ─────────────────────────────────────
+@st.cache_data(show_spinner=False)
+def _cached_rank(names, km_items, years, buy_age, insurance_won, scenario, swing):
+    return sensitivity.rank_stability(list(names), dict(km_items), years, buy_age, insurance_won,
+                                      scenario=scenario, swing=swing, n_draws=1000)
+
+
+with tab_sens:
+    st.subheader("민감도 분석 — 가정이 틀려도 결론이 유지될까?")
+    st.caption(
+        "TCO에는 공식 통계가 아닌 가정(연비·유가·보험료·감가상각·주행거리)이 들어갑니다. "
+        "이 가정들을 흔들어서 ① 어떤 가정이 결과에 가장 큰 영향을 주는지, ② 모델 순위가 얼마나 유지되는지 확인합니다."
+    )
+    km_by_class_s = cost_model.annual_km_by_class(df_lifespan, df_mileage)
+
+    s1, s2, s3, s4, s5 = st.columns(5)
+    with s1:
+        s_years = st.slider("보유 기간(년)", 1, 20, 5, key="sens_years")
+    with s2:
+        s_swing = st.slider("가정 변동폭(±%)", 5, 40, 20, step=5, key="sens_swing") / 100
+    with s3:
+        s_ins = st.number_input("연 보험료(만원)", min_value=0, max_value=300,
+                                value=int(cost_model.AVG_INSURANCE_PREMIUM_WON / 10_000), step=5, key="sens_ins")
+    with s4:
+        s_scn = st.radio("시세 시나리오", cost_model.RESIDUAL_SCENARIOS, index=1, key="sens_scn")
+    with s5:
+        s_buy = st.number_input("구매 시 차령(새 차=0)", min_value=0, max_value=15, value=0, key="sens_buy")
+
+    all_models = list(cost_model.MODEL_SPECS.keys())
+    s_models = st.multiselect("분석할 모델 (2개 이상)", all_models, default=all_models, key="sens_models")
+
+    if len(s_models) < 2:
+        st.info("모델을 2개 이상 골라주세요.")
+    else:
+        st.markdown("#### ① 어떤 가정이 가장 중요할까? (가정 하나씩만 흔들기)")
+        t_model = st.selectbox("모델 선택", s_models, index=len(s_models) - 1, key="sens_tornado_model")
+        torn = sensitivity.tornado(t_model, km_by_class_s, s_years, int(s_buy), s_ins * 10_000,
+                                   scenario=s_scn, swing=s_swing)
+        base_man = torn.attrs["base_man"]
+        torn_plot = torn.iloc[::-1]
+        fig_t = go.Figure()
+        fig_t.add_bar(y=torn_plot["가정"], x=torn_plot["−시나리오_변화_만원"], orientation="h",
+                      name=f"가정 −{s_swing:.0%}", marker_color="#4C78A8")
+        fig_t.add_bar(y=torn_plot["가정"], x=torn_plot["+시나리오_변화_만원"], orientation="h",
+                      name=f"가정 +{s_swing:.0%}", marker_color="#E45756")
+        fig_t.update_layout(barmode="overlay", xaxis_title="TCO 변화 (만원)", yaxis_title="",
+                            legend=dict(orientation="h", y=1.1))
+        st.plotly_chart(fig_t, width="stretch")
+        top = torn.iloc[0]
+        st.caption(
+            f"{t_model}의 {s_years}년 기준 TCO는 {base_man:,.0f}만원입니다. "
+            f"가장 영향이 큰 가정은 **{top['가정']}**(±{s_swing:.0%} → 약 ±{top['변동폭_만원'] / 2:,.0f}만원)입니다. "
+            "연비를 올리면 비용이 줄어드는 것처럼, 막대가 왼쪽이면 TCO 감소, 오른쪽이면 증가입니다."
+        )
+
+        st.markdown("#### ② 가정을 동시에 흔들어도 모델 순위가 유지될까? (무작위 1,000회 시뮬레이션)")
+        km_items = tuple(sorted(km_by_class_s.items()))
+        res_s = _cached_rank(tuple(s_models), km_items, s_years, int(s_buy), s_ins * 10_000, s_scn, s_swing)
+        rs = res_s["rank_share"].reindex(res_s["base_order"])
+        fig_h = px.imshow(
+            rs, text_auto=".0f", aspect="auto", color_continuous_scale="Blues",
+            labels=dict(x="순위(1위=가장 저렴)", y="모델", color="비율(%)"),
+        )
+        st.plotly_chart(fig_h, width="stretch")
+
+        pw = res_s["pairwise"]
+        order = res_s["base_order"]
+        close_pairs = []
+        for a, b in zip(order, order[1:]):
+            close_pairs.append((a, b, pw.loc[a, b]))
+        solid = [f"{a}<{b}" for a, b, pr in close_pairs if pr >= 90]
+        shaky = [f"{a} vs {b}({pr:.0f}%)" for a, b, pr in close_pairs if pr < 75]
+        cheapest, priciest = order[0], order[-1]
+        st.markdown(
+            f"**읽는 법**: 가정을 ±{s_swing:.0%}씩 무작위로 바꿔도 기준 순위(저렴한 순: {' → '.join(order)})와 "
+            f"**완전히 같은 순서**가 나온 비율은 **{res_s['same_order']:.0f}%**입니다. "
+            f"가장 저렴한 모델({cheapest})이 1위를 유지한 비율은 {res_s['rank_share'].loc[cheapest, '1위']:.0f}%, "
+            f"가장 비싼 모델({priciest})이 꼴찌를 유지한 비율은 "
+            f"{res_s['rank_share'].loc[priciest, f'{len(order)}위']:.0f}%입니다."
+        )
+        if solid:
+            st.success("순위가 거의 확실한 이웃 비교(90% 이상): " + ", ".join(solid))
+        if shaky:
+            st.warning("가정에 따라 뒤바뀔 수 있는 이웃 비교(75% 미만): " + ", ".join(shaky)
+                       + " → 이 모델들은 '어느 쪽이 확실히 저렴하다'고 말하기 어렵습니다.")
+
+        with st.expander("분석 방법과 한계 (발표/보고서 근거)"):
+            st.markdown(
+                f"""
+- **①번**: 가정 하나만 기준값의 ±{s_swing:.0%}로 바꾸고 나머지는 고정해 TCO가 얼마나 변하는지 계산했습니다.
+- **②번**: 유가는 모든 모델에 같은 비율로, **연비·보험료·감가상각액·연간 주행거리는 모델마다 독립적으로** ±{s_swing:.0%} 범위(균등분포)에서 1,000번 뽑아 TCO와 순위를 다시 계산했습니다.
+  모든 모델을 같은 방향으로만 흔들면 순위가 절대 안 바뀌는 착시가 생기기 때문에 모델별로 따로 흔들었습니다.
+- '감가상각액'은 신차 가격 오차와 중고 시세 오차를 함께 담은 값입니다(신차가 × 감가율이라 효과가 같음).
+- **한계**: 변동폭(±{s_swing:.0%})과 균등분포는 분석자가 정한 가정이며, 가정들 사이의 상관(예: 유가↑ 시 중고 시세 변화)은 반영하지 않았습니다.
+  보험료는 모든 모델에 같은 평균값에서 출발하고, 모델별 연간 주행거리는 차급 평균을 기준으로 합니다.
+"""
+            )
 
 # ── Tab 6: 내 차 비교 ────────────────────────────────────
 with tab6:
