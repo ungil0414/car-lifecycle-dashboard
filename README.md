@@ -98,7 +98,8 @@ Python · Pandas/NumPy · Plotly · Streamlit · (예정) scikit-learn
 
 ```
 car-lifecycle-dashboard/
-├── app/app.py                      # Streamlit 대시보드 (8개 탭)
+├── .streamlit/config.toml          # 테마 설정
+├── app/app.py                      # Streamlit 대시보드 (9개 탭, 첫 탭은 프로젝트 요약)
 ├── src/
 │   ├── preprocess_real_data.py     # 원본 → 가공 데이터
 │   ├── cost_model.py               # 자동차세·유류비·보험료·감가상각·TCO 계산 로직

@@ -18,6 +18,14 @@ from src import cost_model, data_loader, sensitivity
 
 st.set_page_config(page_title="자동차 생애주기 분석 대시보드", layout="wide")
 
+# ── 공통 색상·스타일 (그래프 전체에서 같은 의미는 같은 색) ──
+px.defaults.template = "plotly_white"
+px.defaults.color_discrete_sequence = ["#4C78A8", "#F58518", "#54A24B", "#E45756", "#72B7B2", "#EECA3B", "#B279A2", "#9D755D", "#BAB0AC"]
+CLASS_ORDER = ["경형", "소형", "중형", "대형"]
+CLASS_COLORS = {"경형": "#9ECAE1", "소형": "#4292C6", "중형": "#2171B5", "대형": "#08306B"}   # 클수록 진하게
+COST_COLORS = {"감가상각": "#264653", "자동차세": "#2A9D8F", "유류비": "#E9C46A", "보험료": "#E76F51"}
+FUEL_COLORS = {"휘발유": "#E9C46A", "경유": "#264653"}
+
 st.title("🚗 자동차 생애주기 분석 대시보드")
 st.caption("공공데이터(KOSIS·서울 열린데이터광장) 기반 차량 교체주기 · 주행거리 · 연령대별 보유 현황 · 유지비 · 총소유비용 분석")
 
@@ -37,10 +45,78 @@ df_age, is_real_age = data_loader.load_age_distribution_data()
 df_age_gender, is_real_age_gender = data_loader.load_age_gender_trend()
 df_cost, is_real_cost = data_loader.load_maintenance_cost_data()
 
-tab1, tab2, tab3, tab4, tab5, tab_model, tab_sens, tab6 = st.tabs([
-    "📊 차급별 평균 사용기간", "🛣️ 주행거리 분석", "👥 연령대별 보유 현황",
+@st.cache_data(show_spinner=False)
+def _cached_rank(names, km_items, years, buy_age, insurance_won, scenario, swing):
+    return sensitivity.rank_stability(list(names), dict(km_items), years, buy_age, insurance_won,
+                                      scenario=scenario, swing=swing, n_draws=1000)
+
+
+tab_home, tab1, tab2, tab3, tab4, tab5, tab_model, tab_sens, tab6 = st.tabs([
+    "🏠 프로젝트 요약", "📊 차급별 평균 사용기간", "🛣️ 주행거리 분석", "👥 연령대별 보유 현황",
     "💰 유지비 분석", "🧮 총소유비용(TCO) 계산기", "🚗 모델별 TCO 비교", "🎯 민감도 분석", "🔍 내 차 비교",
 ])
+
+# ── Tab 0: 프로젝트 요약 ─────────────────────────────────
+with tab_home:
+    st.subheader("이 대시보드가 답하는 질문")
+    st.markdown(
+        "**\"이 차를 N년 타면 총 얼마가 들고, 그 계산은 가정이 틀려도 믿을 만한가?\"** — "
+        "공공데이터로 차급별 사용기간·주행거리·연령대별 보유 현황을 분석하고, 이를 바탕으로 "
+        "자동차세·유류비·보험료·감가상각을 합친 총소유비용(TCO)을 계산한 뒤, 민감도 분석으로 결과의 안정성을 검증했습니다."
+    )
+
+    km_home = cost_model.annual_km_by_class(df_lifespan, df_mileage)
+    mid_tbl = cost_model.yearly_cost_table("중형", "휘발유", km_home["중형"], 10)
+    mid_total = mid_tbl["누적합계_원"].iloc[-1] / 10_000
+    all_models_home = list(cost_model.MODEL_SPECS.keys())
+    res_home = cost_model.compare_models(all_models_home, km_home, 5)
+    cheap_h, pricey_h = res_home.iloc[0], res_home.iloc[-1]
+    rank_home = _cached_rank(tuple(all_models_home), tuple(sorted(km_home.items())), 5, 0,
+                             cost_model.AVG_INSURANCE_PREMIUM_WON, "기본", 0.2)
+    top_age = df_age.loc[df_age["등록대수"].idxmax(), "연령대"]
+
+    h1, h2, h3, h4 = st.columns(4)
+    h1.metric("중형 10년 유지비(세금+기름값+보험료)", f"{mid_total:,.0f}만원")
+    h2.metric(f"5년 TCO 최저 — {cheap_h['모델']}", f"{cheap_h['총소유비용_만원']:,.0f}만원")
+    h3.metric(f"5년 TCO 최고 — {pricey_h['모델']}", f"{pricey_h['총소유비용_만원']:,.0f}만원")
+    h4.metric("서울 등록대수 1위 연령대", f"{top_age}")
+
+    st.markdown("#### 핵심 발견")
+    st.markdown(
+        f"""
+1. **차급이 커질수록 유지비가 가파르게 늘어납니다.** 같은 10년·휘발유 기준 총 유지비는 경형과 대형이 약 두 배 이상 차이 납니다 (🧮 탭).
+2. **TCO에서 가장 큰 항목은 감가상각과 유류비입니다.** 신차를 5년 타고 팔 때 {pricey_h['모델']}의 감가상각만 {pricey_h['감가상각_합계_만원']:,.0f}만원입니다 (🚗 탭).
+3. **결론은 가정에 꽤 단단합니다.** 가정을 ±20% 무작위로 흔들어도 {cheap_h['모델']}이 가장 저렴한 순위를 유지한 비율은 {rank_home['rank_share'].loc[cheap_h['모델'], '1위']:.0f}%, {pricey_h['모델']}이 가장 비싼 순위를 유지한 비율은 {rank_home['rank_share'].loc[pricey_h['모델'], f"{len(all_models_home)}위"]:.0f}%입니다 (🎯 탭).
+4. **비슷한 가격대 모델끼리는 확실한 우열을 말하기 어렵습니다.** 예를 들어 K5와 쏘나타는 가정에 따라 순위가 뒤바뀝니다.
+"""
+    )
+
+    st.markdown("#### 탭 안내")
+    st.markdown(
+        """
+| 탭 | 무엇을 볼 수 있나 |
+|---|---|
+| 📊 차급별 평균 사용기간 | 경형·소형·중형·대형이 평균 몇 년 쓰이는지 (2015~2024 추이 포함) |
+| 🛣️ 주행거리 분석 | 차급별 평균 누적주행거리 |
+| 👥 연령대별 보유 현황 | 서울시 연령대·성별 자동차 등록 현황 |
+| 💰 유지비 분석 | 차급·연료별 연간 자동차세+유류비 |
+| 🧮 총소유비용(TCO) 계산기 | 차급·보유기간·구매 차령을 고르면 N년 총비용 계산 |
+| 🚗 모델별 TCO 비교 | 쏘나타·K5·그랜저 등 실제 모델 비교 (감가상각 포함) |
+| 🎯 민감도 분석 | 가정을 바꿔도 결론이 유지되는지 검증 |
+| 🔍 내 차 비교 | 내 차의 사용연수·주행거리를 평균과 비교 |
+"""
+    )
+
+    with st.expander("데이터와 가정 한눈에 보기"):
+        st.markdown(
+            """
+- **실제 공공데이터**: KOSIS 자동차검사현황(차령별·주행거리별, 2015~2024), 서울 열린데이터광장 자동차등록현황(성별/연령별)
+- **외부 참고값**: 오피넷 평균 유가(2026.9), 보험개발원 개인용 자동차보험 평균 보험료(2025), 제조사 공식 제원·신차 가격
+- **분석자가 둔 가정**: 차급별 대표 배기량·연비, 중고 잔존가치율(낙관/기본/비관), 모델별 연간 주행거리는 차급 평균 사용
+- **제외 항목**: 정비·소모품비, 주차·통행료, 옵션 — 실제 체감 비용은 이보다 높을 수 있습니다
+- 자세한 계산식과 한계는 각 탭 하단의 설명 칸과 GitHub README에 있습니다.
+"""
+        )
 
 # ── Tab 1: 차급별 평균 사용기간 ──────────────────────────
 with tab1:
@@ -48,13 +124,15 @@ with tab1:
     source_badge(is_real_lifespan)
 
     fig = px.bar(
-        df_lifespan.sort_values("평균_사용연수"),
+        df_lifespan,
         x="차급", y="평균_사용연수", text="평균_사용연수",
         labels={"평균_사용연수": "평균 사용연수 (년)"}, color="차급",
+        category_orders={"차급": CLASS_ORDER}, color_discrete_map=CLASS_COLORS,
     )
     fig.update_traces(textposition="outside")
+    fig.update_layout(showlegend=False)
     st.plotly_chart(fig, width="stretch")
-    st.dataframe(df_lifespan, width="stretch")
+    st.dataframe(df_lifespan, width="stretch", hide_index=True)
 
     if is_real_lifespan:
         st.caption(
@@ -72,6 +150,7 @@ with tab1:
         fig_trend = px.line(
             df_trend, x="연도", y="평균_사용연수", color="차급", markers=True,
             labels={"평균_사용연수": "평균 사용연수 (년)"},
+            category_orders={"차급": CLASS_ORDER}, color_discrete_map=CLASS_COLORS,
         )
         st.plotly_chart(fig_trend, width="stretch")
 
@@ -81,13 +160,15 @@ with tab2:
     source_badge(is_real_mileage)
 
     fig_m = px.bar(
-        df_mileage.sort_values("평균_누적주행거리_km"),
+        df_mileage,
         x="차급", y="평균_누적주행거리_km", text="평균_누적주행거리_km",
         labels={"평균_누적주행거리_km": "평균 누적주행거리 (km)"}, color="차급",
+        category_orders={"차급": CLASS_ORDER}, color_discrete_map=CLASS_COLORS,
     )
     fig_m.update_traces(textposition="outside")
+    fig_m.update_layout(showlegend=False)
     st.plotly_chart(fig_m, width="stretch")
-    st.dataframe(df_mileage, width="stretch")
+    st.dataframe(df_mileage, width="stretch", hide_index=True)
 
 # ── Tab 3: 연령대별 자동차 보유 현황 ─────────────────────
 with tab3:
@@ -98,11 +179,11 @@ with tab3:
 
     fig2 = px.bar(
         df_age, x="연령대", y="등록대수", text="비중(%)",
-        labels={"등록대수": "등록대수 (대)"}, color="연령대",
+        labels={"등록대수": "등록대수 (대)"}, color_discrete_sequence=["#4C78A8"],
     )
     fig2.update_traces(texttemplate="%{text}%", textposition="outside")
     st.plotly_chart(fig2, width="stretch")
-    st.dataframe(df_age, width="stretch")
+    st.dataframe(df_age, width="stretch", hide_index=True)
 
     if is_real_age_gender and not df_age_gender.empty:
         age_order = ["10대 이하", "20대", "30대", "40대", "50대", "60대", "70대", "80대", "90대 이상"]
@@ -132,9 +213,10 @@ with tab4:
     fig3 = px.bar(
         df_cost, x="차급", y="연간_예상유지비_만원", color="연료", barmode="group",
         labels={"연간_예상유지비_만원": "연간 예상 유지비 (만원)"},
+        category_orders={"차급": CLASS_ORDER}, color_discrete_map=FUEL_COLORS,
     )
     st.plotly_chart(fig3, width="stretch")
-    st.dataframe(df_cost, width="stretch")
+    st.dataframe(df_cost, width="stretch", hide_index=True)
 
     if is_real_cost:
         st.markdown(
@@ -191,6 +273,7 @@ with tab5:
     long_df["항목"] = long_df["항목"].map({"자동차세_원": "자동차세", "유류비_원": "유류비", "보험료_원": "보험료"})
     fig_year = px.bar(
         long_df, x="보유연차", y="금액_만원", color="항목", barmode="stack",
+        color_discrete_map=COST_COLORS,
         labels={"금액_만원": "연간 비용 (만원)", "보유연차": "보유 N년차"},
     )
     st.plotly_chart(fig_year, width="stretch")
@@ -199,7 +282,7 @@ with tab5:
     st.markdown("#### 누적 비용 추이")
     table_view = table.assign(누적합계_만원=table["누적합계_원"] / 10_000)
     fig_cum = px.line(
-        table_view, x="보유연차", y="누적합계_만원", markers=True,
+        table_view, x="보유연차", y="누적합계_만원", markers=True, color_discrete_sequence=["#264653"],
         labels={"누적합계_만원": "누적 비용 (만원)", "보유연차": "보유 N년차"},
     )
     st.plotly_chart(fig_cum, width="stretch")
@@ -216,12 +299,13 @@ with tab5:
     cmp_long["항목"] = cmp_long["항목"].map({"자동차세_합계_만원": "자동차세", "유류비_합계_만원": "유류비", "보험료_합계_만원": "보험료"})
     fig_cmp = px.bar(
         cmp_long, x="차급", y="금액_만원", color="항목", barmode="stack",
-        category_orders={"차급": cmp_df["차급"].tolist()},
+        category_orders={"차급": cmp_df["차급"].tolist()}, color_discrete_map=COST_COLORS,
         labels={"금액_만원": f"{tco_years}년 총비용 (만원)"},
     )
     st.plotly_chart(fig_cmp, width="stretch")
     st.dataframe(
-        cmp_df.assign(총소유비용_만원=cmp_df["총소유비용_만원"].round(0)).round(0),
+        cmp_df.rename(columns={"총소유비용_만원": "총소유비용(만원)", "자동차세_합계_만원": "자동차세 합계(만원)",
+                               "유류비_합계_만원": "유류비 합계(만원)", "보험료_합계_만원": "보험료 합계(만원)"}).round(0),
         width="stretch", hide_index=True,
     )
 
@@ -283,8 +367,8 @@ with tab_model:
         k2.metric("가장 비쌈", f"{priciest['모델']} {priciest['총소유비용_만원']:,.0f}만원")
         k3.metric(f"{m_years}년 차이", f"{priciest['총소유비용_만원'] - cheapest['총소유비용_만원']:,.0f}만원")
         st.caption(
-            f"시세 시나리오({scenario}) 기준입니다. 낙관~비관 범위로 보면 "
-            + ", ".join(f"{r['모델']} {r['총소유비용_낙관_만원']:,.0f}~{r['총소유비용_비관_만원']:,.0f}만원" for _, r in res.iterrows())
+            f"시세 시나리오({scenario}) 기준입니다. 낙관 → 비관 범위로 보면 "
+            + ", ".join(f"{r['모델']} {r['총소유비용_낙관_만원']:,.0f} → {r['총소유비용_비관_만원']:,.0f}만원" for _, r in res.iterrows())
             + "."
         )
 
@@ -296,14 +380,20 @@ with tab_model:
             {"감가상각_합계_만원": "감가상각", "자동차세_합계_만원": "자동차세", "유류비_합계_만원": "유류비", "보험료_합계_만원": "보험료"})
         fig_m = px.bar(
             long_m, x="모델", y="금액_만원", color="항목", barmode="stack",
-            category_orders={"모델": res["모델"].tolist()},
+            category_orders={"모델": res["모델"].tolist(), "항목": ["감가상각", "자동차세", "유류비", "보험료"]},
+            color_discrete_map=COST_COLORS,
             labels={"금액_만원": f"{m_years}년 총비용 (만원)"},
         )
         st.plotly_chart(fig_m, width="stretch")
-        st.dataframe(
-            res.assign(총소유비용_만원=res["총소유비용_만원"].round(0)).round(0),
-            width="stretch", hide_index=True,
-        )
+        show = res.rename(columns={
+            "배기량_cc": "배기량(cc)", "연비_km_L": "연비(km/L)", "신차가_만원": "신차가(만원)",
+            "총소유비용_만원": "총소유비용(만원)", "감가상각_합계_만원": "감가상각(만원)",
+            "자동차세_합계_만원": "자동차세(만원)", "유류비_합계_만원": "유류비(만원)", "보험료_합계_만원": "보험료(만원)",
+            "총소유비용_낙관_만원": "낙관 총비용(만원)", "총소유비용_비관_만원": "비관 총비용(만원)",
+        })
+        cost_cols = [c for c in show.columns if c.endswith("(만원)")]
+        show[cost_cols] = show[cost_cols].round(0)
+        st.dataframe(show, width="stretch", hide_index=True)
 
     with st.expander("제원 출처와 한계 (발표/보고서 근거)"):
         spec_df = pd.DataFrame(cost_model.MODEL_SPECS).T.reset_index().rename(columns={"index": "모델"})
@@ -327,12 +417,6 @@ with tab_model:
         )
 
 # ── Tab: 민감도 분석 ─────────────────────────────────────
-@st.cache_data(show_spinner=False)
-def _cached_rank(names, km_items, years, buy_age, insurance_won, scenario, swing):
-    return sensitivity.rank_stability(list(names), dict(km_items), years, buy_age, insurance_won,
-                                      scenario=scenario, swing=swing, n_draws=1000)
-
-
 with tab_sens:
     st.subheader("민감도 분석 — 가정이 틀려도 결론이 유지될까?")
     st.caption(
@@ -387,7 +471,7 @@ with tab_sens:
         rs = res_s["rank_share"].reindex(res_s["base_order"])
         fig_h = px.imshow(
             rs, text_auto=".0f", aspect="auto", color_continuous_scale="Blues",
-            labels=dict(x="순위(1위=가장 저렴)", y="모델", color="비율(%)"),
+            labels=dict(x="순위(1위=가장 저렴)", y="", color="비율(%)"),
         )
         st.plotly_chart(fig_h, width="stretch")
 
@@ -400,8 +484,8 @@ with tab_sens:
         shaky = [f"{a} vs {b}({pr:.0f}%)" for a, b, pr in close_pairs if pr < 75]
         cheapest, priciest = order[0], order[-1]
         st.markdown(
-            f"**읽는 법**: 가정을 ±{s_swing:.0%}씩 무작위로 바꿔도 기준 순위(저렴한 순: {' → '.join(order)})와 "
-            f"**완전히 같은 순서**가 나온 비율은 **{res_s['same_order']:.0f}%**입니다. "
+            f"**읽는 법** — 가정을 ±{s_swing:.0%}씩 무작위로 바꿔도 기준 순위(저렴한 순: {' → '.join(order)})와 "
+            f"완전히 같은 순서가 나온 비율은 **{res_s['same_order']:.0f}**%입니다. "
             f"가장 저렴한 모델({cheapest})이 1위를 유지한 비율은 {res_s['rank_share'].loc[cheapest, '1위']:.0f}%, "
             f"가장 비싼 모델({priciest})이 꼴찌를 유지한 비율은 "
             f"{res_s['rank_share'].loc[priciest, f'{len(order)}위']:.0f}%입니다."
@@ -458,7 +542,11 @@ with tab6:
         delta=f"{-remaining:.1f}년 초과" if remaining < 0 else None,
     )
     if avg_km is not None:
-        m3.metric("같은 차급 평균 누적주행거리", f"{avg_km:,.0f}km", delta=f"{my_km - avg_km:+,.0f}km (내 차 대비)")
+        diff_km = my_km - avg_km
+        m3.metric(
+            "같은 차급 평균 누적주행거리", f"{avg_km:,.0f}km",
+            delta=f"내 차는 평균보다 {abs(diff_km):,.0f}km {'적음' if diff_km < 0 else '많음'}", delta_color="off",
+        )
     m4.metric("같은 조건 평균 연간 유지비", f"{avg_cost:.0f}만원")
 
     if remaining <= 0:
