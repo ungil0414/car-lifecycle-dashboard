@@ -1,6 +1,8 @@
 # 자동차 생애주기 분석 대시보드
 ### Car Lifecycle & Total Cost of Ownership Dashboard
 
+> 📺 **시연 영상**: https://youtu.be/QFOqHh5gITY
+
 > 내 차를 몇 년 타면, 총 얼마가 들까? 공공데이터로 계산해 보는 자동차 총소유비용(TCO) 분석
 
 | 항목 | 내용 |
@@ -21,8 +23,8 @@
 | 실행 방법 | 아래 [실행 방법](#9-실행-방법) (`streamlit run app/app.py`) |
 | 개발 문서 | 이 README, [`docs/`](docs) |
 | 포스터 (PPT·PDF) | [`docs/poster.pdf`](docs/poster.pdf), [`docs/poster.pptx`](docs/poster.pptx) |
-| 프로젝트 결과보고서 PDF | `docs/report.pdf` |
-| 시연 영상 | 업로드 후 이 줄에 YouTube 링크 기재 |
+| 프로젝트 결과보고서 PDF | [`docs/report.pdf`](docs/report.pdf) |
+| 시연 영상 | [YouTube](https://youtu.be/QFOqHh5gITY) |
 
 ---
 
@@ -88,7 +90,7 @@ flowchart LR
 | 전국 평균 유가 (휘발유·경유), 2026.09 | 오피넷(한국석유공사) | 유류비 계산 |
 | 개인용 자동차보험 1대당 평균 보험료 (2025, 약 68만원) | 보험개발원 (언론 보도 인용) | 보험료 계산 |
 
-> 📌 세율·경감률의 정확한 조문 번호는 발표 전에 위택스(wetax.go.kr) 또는 국가법령정보센터에서 확인해 보고서에 적을 것.
+> 자동차세 세율·차령 경감은 지방세법 제127조, 지방교육세는 제151조 기준입니다.
 
 ## 4. 계산 방법
 
