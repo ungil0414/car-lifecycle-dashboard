@@ -1,8 +1,6 @@
 """
-sample_data.py
-
-⚠️ 실제 공공데이터 CSV(data/processed/)가 없을 때만 쓰이는 '가상 데이터' 생성기입니다.
-   현재는 모든 탭이 실제 데이터로 동작하므로, 이 파일은 안전장치(fallback) 역할만 합니다.
+sample_data.py — 실제 데이터 CSV(data/processed/)가 없을 때 대신 쓰는 가상 데이터 생성기.
+현재는 모든 탭이 실제 데이터로 동작하므로 안전장치(fallback) 용도로만 쓴다.
 """
 
 import numpy as np

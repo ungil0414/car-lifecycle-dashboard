@@ -1,19 +1,10 @@
-"""
-app.py — 자동차 생애주기 분석 대시보드 (Streamlit)
-
-실행: streamlit run app/app.py
-"""
-
 import sys
 from pathlib import Path
-
 sys.path.append(str(Path(__file__).resolve().parent.parent))
-
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-
 from src import cost_model, data_loader, sensitivity
 
 st.set_page_config(page_title="자동차 생애주기 분석 대시보드", layout="wide")
@@ -29,13 +20,11 @@ FUEL_COLORS = {"휘발유": "#E9C46A", "경유": "#264653"}
 st.title("🚗 자동차 생애주기 분석 대시보드")
 st.caption("공공데이터(KOSIS·서울 열린데이터광장) 기반 차량 교체주기 · 주행거리 · 연령대별 보유 현황 · 유지비 · 총소유비용 분석")
 
-
 def source_badge(is_real: bool):
     if is_real:
         st.caption("✅ 실제 공공데이터 기반")
     else:
         st.caption("⚠️ 샘플(가상) 데이터 — 실제 데이터 미연동 상태")
-
 
 # ── 데이터 로드 ──────────────────────────────────────────
 df_lifespan, is_real_lifespan = data_loader.load_lifespan_data()
@@ -49,7 +38,6 @@ df_cost, is_real_cost = data_loader.load_maintenance_cost_data()
 def _cached_rank(names, km_items, years, buy_age, insurance_won, scenario, swing):
     return sensitivity.rank_stability(list(names), dict(km_items), years, buy_age, insurance_won,
                                       scenario=scenario, swing=swing, n_draws=1000)
-
 
 tab_home, tab1, tab2, tab3, tab4, tab5, tab_model, tab_sens, tab6 = st.tabs([
     "🏠 프로젝트 요약", "📊 차급별 평균 사용기간", "🛣️ 주행거리 분석", "👥 연령대별 보유 현황",

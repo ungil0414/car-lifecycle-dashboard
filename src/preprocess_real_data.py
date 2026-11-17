@@ -1,32 +1,23 @@
-"""
-preprocess_real_data.py
-
-원본 공공데이터(KOSIS 엑셀 2개 + 서울 열린데이터광장 엑셀 1개)를 읽어서
-대시보드에 바로 쓸 수 있는 CSV로 가공합니다.
-
-실행: python src/preprocess_real_data.py
-"""
-
 import sys
 from pathlib import Path
 
 import pandas as pd
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(BASE_DIR))  # 'python src/preprocess_real_data.py' 로 직접 실행해도 src 패키지를 찾도록
+sys.path.insert(0, str(BASE_DIR))  # 직접 실행해도 src 패키지를 찾도록
 
 from src import cost_model  # noqa: E402
 
 RAW_DIR = BASE_DIR / "data" / "raw"
 PROCESSED_DIR = BASE_DIR / "data" / "processed"
 
-# 차령 구간 → 대표 연수(중간값). '15년 이상'은 열린 구간이라 18년으로 가정.
+# 차령 구간 → 대표 연수 (중간값, '15년 이상'은 18년으로 가정)
 AGE_MIDPOINT = {
     "4년 이하": 2.0, "5~6년": 5.5, "7~8년": 7.5, "9~10년": 9.5,
     "11~12년": 11.5, "13~14년": 13.5, "15년 이상": 18.0,
 }
 
-# 주행거리 구간 → 대표 주행거리(km, 중간값). '25만km 이상'은 30만으로 가정.
+# 주행거리 구간 → 대표 주행거리(km) (중간값, '25만km 이상'은 30만으로 가정)
 MILEAGE_MIDPOINT = {
     "5만km 미만": 25_000, "5만km~10만km 미만": 75_000,
     "10만km~15만km 미만": 125_000, "15만km~20만km 미만": 175_000,
@@ -37,9 +28,7 @@ CLASS_ORDER = ["경형", "소형", "중형", "대형"]
 
 
 def _parse_kosis_wide_file(path: Path) -> pd.DataFrame:
-    """KOSIS 3행 헤더(연도/구간/지표) + 병합 라벨 열(용도/차종/규모)을 긴 형태로 변환.
-    반환 컬럼: 연도, 용도, 차종, 규모, 구간, 검사대수
-    """
+    """KOSIS 엑셀(3행 헤더)을 긴 형태로 변환. 컬럼: 연도, 용도, 차종, 규모, 구간, 검사대수"""
     raw = pd.read_excel(path, sheet_name="데이터", header=None)
 
     years = raw.iloc[0, 3:].tolist()
@@ -72,7 +61,7 @@ def _parse_kosis_wide_file(path: Path) -> pd.DataFrame:
 
 
 def _passenger_subset(df: pd.DataFrame, year: int | None = None) -> pd.DataFrame:
-    """승용차 · 전체 용도 · 규모별 · '기타' 제외 (필요 시 특정 연도만)"""
+    """승용차·전체 용도·규모별 데이터만 추림 ('기타' 제외, year 지정 시 해당 연도만)."""
     mask = (df["용도"] == "전체") & (df["차종"] == "승용차") & (df["규모"] != "합계") & (df["구간"] != "기타")
     if year is not None:
         mask &= df["연도"] == year
@@ -85,7 +74,7 @@ def _ordered(df: pd.DataFrame, col: str = "차급") -> pd.DataFrame:
 
 
 def build_lifespan_summary(df_age_full: pd.DataFrame, year: int = 2024) -> pd.DataFrame:
-    """차급별 평균 사용연수 (구간 중간값의 검사대수 가중평균)"""
+    """차급별 평균 사용연수 (구간 중간값의 검사대수 가중평균)."""
     sub = _passenger_subset(df_age_full, year)
     sub["중간값"] = sub["구간"].map(AGE_MIDPOINT)
     rows = []
@@ -97,7 +86,7 @@ def build_lifespan_summary(df_age_full: pd.DataFrame, year: int = 2024) -> pd.Da
 
 
 def build_mileage_summary(df_mileage_full: pd.DataFrame, year: int = 2024) -> pd.DataFrame:
-    """차급별 평균 누적주행거리 (구간 중간값의 검사대수 가중평균)"""
+    """차급별 평균 누적주행거리 (구간 중간값의 검사대수 가중평균)."""
     sub = _passenger_subset(df_mileage_full, year)
     sub["중간값"] = sub["구간"].map(MILEAGE_MIDPOINT)
     rows = []
@@ -109,7 +98,7 @@ def build_mileage_summary(df_mileage_full: pd.DataFrame, year: int = 2024) -> pd
 
 
 def build_lifespan_trend(df_age_full: pd.DataFrame) -> pd.DataFrame:
-    """연도별(2015~2024) 차급별 평균 사용연수 추이"""
+    """연도별(2015~2024) 차급별 평균 사용연수."""
     sub = _passenger_subset(df_age_full)
     sub["중간값"] = sub["구간"].map(AGE_MIDPOINT)
     rows = []
@@ -121,7 +110,7 @@ def build_lifespan_trend(df_age_full: pd.DataFrame) -> pd.DataFrame:
 
 
 def _parse_seoul_age_gender_file(path: Path) -> pd.DataFrame:
-    """서울 열린데이터광장 '자동차등록현황(성별/연령별)' → 긴 형태 (연도, 성별, 연령대, 등록대수)"""
+    """서울 자동차등록현황(성별/연령별)을 긴 형태로 변환. 컬럼: 연도, 성별, 연령대, 등록대수"""
     raw = pd.read_excel(path, sheet_name="데이터", header=None)
     years = raw.iloc[0, 2:].tolist()
 
@@ -145,7 +134,7 @@ def _parse_seoul_age_gender_file(path: Path) -> pd.DataFrame:
 
 
 def build_age_distribution_summary(df_age_full: pd.DataFrame, year: int = 2025) -> pd.DataFrame:
-    """연령대별 등록대수(성별 합산, 최신연도) + 비중(%)"""
+    """연령대별 등록대수(성별 합산)와 비중(%)."""
     grouped = df_age_full[df_age_full["연도"] == year].groupby("연령대", as_index=False)["등록대수"].sum()
     order = ["10대 이하", "20대", "30대", "40대", "50대", "60대", "70대", "80대", "90대 이상"]
     grouped["연령대"] = pd.Categorical(grouped["연령대"], categories=order, ordered=True)
@@ -155,8 +144,7 @@ def build_age_distribution_summary(df_age_full: pd.DataFrame, year: int = 2025) 
 
 
 def build_maintenance_cost_summary(df_lifespan: pd.DataFrame, df_mileage: pd.DataFrame) -> pd.DataFrame:
-    """차급 × 연료별 '새 차 1~2년차' 기준 연간 유지비 = 자동차세(경감 전) + 유류비.
-    차령에 따른 변화는 TCO 탭(cost_model.yearly_cost_table)에서 다룬다."""
+    """차급·연료별 새 차 1년차 기준 연간 유지비 (자동차세 + 유류비). 차령별 변화는 TCO 탭에서 다룬다."""
     km_by_class = cost_model.annual_km_by_class(df_lifespan, df_mileage)
     rows = []
     for cls in CLASS_ORDER:
